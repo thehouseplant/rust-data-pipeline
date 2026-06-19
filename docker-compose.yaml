@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: asset_user
+      POSTGRES_PASSWORD: asset_pass
+      POSTGRES_DB: asset_ingest
+    ports:
+      - "5432:5432"
+    volumes:
+      - asset_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asset_user -d asset_ingest"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  asset_pg_data:
