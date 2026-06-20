@@ -49,13 +49,13 @@ mod tests {
 
     #[test]
     fn parses_simple_csv_into_one_record_per_row() {
-        let csv = "name,age,city\nAlice,30,Seatte\nBob,25,Austin\n";
+        let csv = "name,age,city\nAlice,30,Seattle\nBob,25,Austin\n";
         let records = CsvIngestor.parse("people.csv", csv.as_bytes()).unwrap();
 
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].asset_type, "csv_row");
         assert_eq!(records[0].row_index, Some(0));
-        assert_eq!(records[0].row_index, Some(1));
+        assert_eq!(records[1].row_index, Some(1));
 
         assert_eq!(records[0].payload["name"], "Alice");
         assert_eq!(records[0].payload["age"], "30");
@@ -70,7 +70,7 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.containes("no data rows"), "Unexpected error: {err}");
+        assert!(err.contains("no data rows"), "unexpected error: {err}");
     }
 
     #[test]
