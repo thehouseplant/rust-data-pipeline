@@ -50,7 +50,9 @@ mod tests {
         // because EXIF is treated as optional metadata rather than
         // something that gates a successful upload.
         let garbage = b"this is not an image at all, just some bytes";
-        let records = ImageMetaIngestor.parse("not-an-image.jpg", garbage).unwrap();
+        let records = ImageMetaIngestor
+            .parse("not-an-image.jpg", garbage)
+            .unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].asset_type, "image_metadata");
@@ -97,8 +99,9 @@ mod tests {
     #[test]
     #[ignore]
     fn real_jpeg_with_exif_populates_exif_fields() {
-        let bytes = std::fs::read("tests/fixtures/with_exif.jpg")
-            .expect("place a real EXIF-bearing JPEG at tests/fixtures/with_exif.jpg to run this test");
+        let bytes = std::fs::read("tests/fixtures/with_exif.jpg").expect(
+            "place a real EXIF-bearing JPEG at tests/fixtures/with_exif.jpg to run this test",
+        );
 
         let records = ImageMetaIngestor.parse("with_exif.jpg", &bytes).unwrap();
 
