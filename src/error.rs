@@ -24,6 +24,9 @@ pub enum AppError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("missing or invalid API key")]
+    Unauthorized,
 }
 
 impl IntoResponse for AppError {
@@ -35,9 +38,19 @@ impl IntoResponse for AppError {
             AppError::Multipart(_) => StatusCode::BAD_REQUEST,
             AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
         };
 
-        tracing::error!(error = %self, "request failed");
+        // Don't log full request failure details for auth failures at
+        // error level - a stream of bad/missing keys from a misconfigured
+        // client (or a scan) shouldn't fill error-level logs the way a
+        // genuine parse/DB failure should. warn! is enough to notice a
+        // pattern without treating every failed auth attempt as urgent.
+        if matches!(self, AppError::Unauthorized) {
+            tracing::warn!("rejected request: missing or invalid API key");
+        } else {
+            tracing::error!(error = %self, "request failed");
+        }
 
         let body = Json(json!({
             "error": self.to_string(),
