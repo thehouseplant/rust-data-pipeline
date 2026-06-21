@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod db;
 mod error;
@@ -11,6 +12,7 @@ use sqlx::PgPool;
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub api_key: String,
 }
 
 #[tokio::main]
@@ -29,7 +31,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("running migrations");
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let state = AppState { db: pool };
+    let state = AppState {
+        db: pool,
+        api_key: config.api_key.clone(),
+    };
 
     let app = routes::build_router(state).layer(DefaultBodyLimit::max(config.max_upload_bytes));
 
