@@ -1,4 +1,4 @@
-# Rust Data Pipeline
+# asset-ingest-api
 
 A small Rust/axum/Postgres service that accepts file uploads (CSV, JSON,
 images) over HTTP, parses them per-type, and stores the results as JSONB
@@ -27,9 +27,15 @@ rows in Postgres.
 
 ## Running locally
 
-1. Start Postgres:
+This project now lives inside the `asset-ingest` monorepo, alongside the
+`ui/` React app. `docker-compose.yml` lives at the monorepo root (one
+level up from this directory), since Postgres is shared infrastructure
+rather than something specific to this crate.
+
+1. Start Postgres (from the monorepo root, not from `api/`):
 
    ```bash
+   cd ..   # if you're inside api/
    docker compose up -d
    ```
 
@@ -43,22 +49,64 @@ rows in Postgres.
    cargo install sqlx-cli --no-default-features --features postgres,rustls
    ```
 
-3. Build and run:
+3. Set up your `.env` (one already exists with a generated key for local
+   dev, but if you're starting fresh, copy the template and generate
+   your own key):
 
    ```bash
+   cp .env.example .env
+   # then fill in API_KEY, e.g.:
+   echo "API_KEY=$(openssl rand -hex 32)" >> .env
+   ```
+
+4. Build and run (from inside `api/`):
+
+   ```bash
+   cd api   # if you're at the monorepo root
    cargo run
    ```
 
    On first run this will take a while (compiling all dependencies). The
-   app reads `.env` automatically (via `dotenvy`), runs migrations against
+   app reads `.env` automatically (via `dotenvy`) from the current
+   working directory — so run `cargo run` from inside `api/`, where
+   `.env` lives, not from the monorepo root. It runs migrations against
    the `DATABASE_URL` there, and starts listening on port 3000.
 
-4. Check it's up:
+   Startup fails loudly if `API_KEY` isn't set — that's deliberate, see
+   the Authentication section below.
+
+5. Check it's up (the health endpoint doesn't require auth):
 
    ```bash
    curl http://localhost:3000/health
    # -> ok
    ```
+
+## Authentication
+
+Every route except `/health` requires an `X-API-Key` header matching the
+`API_KEY` set in `.env`. Requests without it, or with the wrong value,
+get a `401`:
+
+```bash
+curl http://localhost:3000/assets/recent
+# -> {"error":"missing or invalid API key"}
+
+curl -H "X-API-Key: $(grep API_KEY .env | cut -d= -f2)" http://localhost:3000/assets/recent
+# -> [...]
+```
+
+All the `curl` examples below assume you've exported your key for
+convenience:
+
+```bash
+export ASSET_API_KEY=$(grep API_KEY .env | cut -d= -f2)
+```
+
+This is a single shared secret, sized for "keep this off my LAN" rather
+than multi-user access control — see the Notes section below for where
+this would need to evolve if more than one person/service needs distinct
+credentials.
 
 ## Trying it out
 
@@ -75,7 +123,7 @@ EOF
 Upload it:
 
 ```bash
-curl -F "file=@/tmp/sample.csv" http://localhost:3000/upload
+curl -H "X-API-Key: $ASSET_API_KEY" -F "file=@/tmp/sample.csv" http://localhost:3000/upload
 ```
 
 Upload a JSON file and an image together in one request:
@@ -83,7 +131,8 @@ Upload a JSON file and an image together in one request:
 ```bash
 echo '{"event": "signup", "user_id": 42}' > /tmp/sample.json
 
-curl -F "file=@/tmp/sample.csv" \
+curl -H "X-API-Key: $ASSET_API_KEY" \
+     -F "file=@/tmp/sample.csv" \
      -F "file=@/tmp/sample.json" \
      -F "file=@/path/to/photo.jpg" \
      http://localhost:3000/upload
@@ -103,10 +152,48 @@ Each call returns a JSON summary like:
 Check what landed in the DB without leaving HTTP:
 
 ```bash
-curl http://localhost:3000/assets/recent | jq
+curl -H "X-API-Key: $ASSET_API_KEY" http://localhost:3000/assets/recent | jq
 ```
 
-Or go straight to Postgres:
+### Browsing endpoints
+
+For paginated, filterable browsing (used by the `ui/` React app in this
+monorepo), two endpoints were added alongside `/assets/recent`:
+
+```bash
+# Paginated, optionally filtered by type
+curl -H "X-API-Key: $ASSET_API_KEY" \
+     "http://localhost:3000/assets?type=csv_row&limit=10&offset=0" | jq
+
+# Distinct asset types currently present, with counts
+curl -H "X-API-Key: $ASSET_API_KEY" http://localhost:3000/assets/types | jq
+```
+
+`GET /assets` accepts:
+- `type` (optional) - filter to one asset_type; omit for all types
+- `limit` (optional, default 25, max 200)
+- `offset` (optional, default 0)
+
+Response shape:
+```json
+{
+  "assets": [ ... ],
+  "total": 142,
+  "limit": 25,
+  "offset": 0
+}
+```
+
+### Browsing UI
+
+The `ui/` directory at the monorepo root is a React app that talks to
+this API for browsing - see `../ui/README.md` for setup. This API ships
+with a permissive CORS layer (`tower_http::cors::CorsLayer::permissive()`)
+to support that cross-origin local dev setup; tighten this before
+deploying anywhere beyond localhost.
+
+Or go straight to Postgres (run from the monorepo root, where
+`docker-compose.yml` lives):
 
 ```bash
 docker compose exec postgres psql -U asset_user -d asset_ingest \
@@ -117,8 +204,16 @@ docker compose exec postgres psql -U asset_user -d asset_ingest \
 
 This is a starting point, not production-ready:
 
-- **No auth.** Add a middleware layer (e.g. API key header check) before
-  exposing this beyond localhost.
+- **Single shared API key, not per-user/per-service auth.** Every
+  authenticated request uses the same `X-API-Key` value, checked via
+  constant-time comparison in `src/auth.rs`. There's no concept of
+  separate credentials, scopes, or revoking one caller without rotating
+  the key for everyone. Fine for "just me, locally"; if this ever needs
+  to support multiple distinct clients, the natural next step is moving
+  key lookup into the DB (a `api_keys` table with name/hash/revoked_at)
+  rather than a single `Config::api_key` string comparison.
+- **No rate limiting.** Nothing currently stops a (mis)behaving or
+  malicious client with a valid key from hammering `/upload` repeatedly.
 - **Plain `sqlx::query`, not `sqlx::query!`.** The macro form checks SQL
   against your live schema at compile time, which is great once your
   schema stabilizes — but it requires `DATABASE_URL` to be reachable at
@@ -143,6 +238,7 @@ src/
   main.rs            # bootstrap: config, db pool, migrations, router, serve
   config.rs           # env-based config struct
   error.rs            # AppError (HTTP-facing) + IngestError (parser-facing)
+  auth.rs              # X-API-Key middleware (constant-time comparison)
   db/
     mod.rs            # pool creation
     queries.rs         # insert_batch: transactional bulk insert
@@ -152,8 +248,9 @@ src/
     json_ingestor.rs
     image_ingestor.rs
   routes/
-    mod.rs              # router assembly
+    mod.rs              # router assembly + CORS layer
     upload.rs            # /upload and /assets/recent handlers
+    assets.rs              # /assets and /assets/types (filtered/paginated browsing)
 migrations/
   20260618000001_init.sql
 ```
