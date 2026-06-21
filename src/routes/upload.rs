@@ -20,7 +20,7 @@ pub struct UploadSummary {
 }
 
 /// Accepts one or more files in a multipart/form-data upload.
-/// Each file is processed independently — one bad file does not
+/// Each file is processed independently - one bad file does not
 /// fail the others; failures are reported per-file in the response.
 pub async fn upload_handler(
     State(state): State<AppState>,
@@ -115,7 +115,7 @@ async fn process_single_file(state: &AppState, filename: &str, data: &[u8]) -> F
     }
 }
 
-/// Simple read endpoint to verify ingested data — fetch recent records,
+/// Simple read endpoint to verify ingested data - fetch recent records,
 /// optionally filtered by asset_type. Handy for sanity-checking uploads
 /// without reaching for psql.
 pub async fn list_recent_handler(
