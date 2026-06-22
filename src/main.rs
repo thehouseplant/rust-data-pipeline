@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod error;
 mod ingest;
+mod rate_limit;
 mod routes;
 
 use axum::extract::DefaultBodyLimit;

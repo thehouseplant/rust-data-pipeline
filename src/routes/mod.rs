@@ -1,15 +1,27 @@
-use crate::{auth::require_api_key, AppState};
+use crate::{
+    auth::require_api_key,
+    rate_limit::ApiKeyExtractor,
+    AppState,
+};
 use axum::{
+    body::Body,
     middleware,
     routing::{get, post},
     Router,
 };
+use governor::middleware::NoOpMiddleware;
+use tower_governor::GovernorLayer;
 use tower_http::cors::CorsLayer;
 
 pub mod assets;
 pub mod upload;
 
-pub fn build_router(state: AppState) -> Router {
+/// Type alias purely for readability - GovernorLayer's full generic
+/// signature (key extractor, governor middleware, response body type)
+/// is verbose to spell out at every call site.
+pub type ApiRateLimitLayer = GovernorLayer<ApiKeyExtractor, NoOpMiddleware, Body>;
+
+pub fn build_router(state: AppState, rate_limit: ApiRateLimitLayer) -> Router {
     // Deliberately two routers merged together, not one router with
     // per-route auth exclusions: this makes "/health is the only
     // unauthenticated route" something you can see at a glance here,
@@ -17,6 +29,14 @@ pub fn build_router(state: AppState) -> Router {
     // other route individually opted in to the auth layer.
     let public_routes = Router::new().route("/health", get(health_handler));
 
+    // Layer order matters here: .layer() calls stack outermost-last, so
+    // the rate limiter (added second) wraps the auth check (added
+    // first) and therefore runs BEFORE it on incoming requests. This is
+    // deliberate - every request gets counted against its bucket (real
+    // key or the shared "invalid" bucket) even if auth then rejects it,
+    // so a flood of bad-auth attempts is itself throttled rather than
+    // bypassing the limiter entirely by being rejected too "early" to
+    // count.
     let protected_routes = Router::new()
         .route("/upload", post(upload::upload_handler))
         .route("/assets/recent", get(upload::list_recent_handler))
@@ -25,7 +45,8 @@ pub fn build_router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_api_key,
-        ));
+        ))
+        .route_layer(rate_limit);
 
     public_routes
         .merge(protected_routes)

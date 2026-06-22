@@ -18,8 +18,9 @@ impl Ingestor for CsvIngestor {
         let mut records = Vec::new();
 
         for (idx, result) in reader.records().enumerate() {
-            let row = result
-                .map_err(|e| IngestError::Malformed(format!("'{filename}' row {idx}: {e}")))?;
+            let row = result.map_err(|e| {
+                IngestError::Malformed(format!("'{filename}' row {idx}: {e}"))
+            })?;
 
             let mut obj = Map::new();
             for (header, value) in headers.iter().zip(row.iter()) {

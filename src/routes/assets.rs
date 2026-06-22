@@ -42,11 +42,12 @@ pub async fn list_assets_handler(
 
     let (assets, total) = match &params.asset_type {
         Some(asset_type) => {
-            let total: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM ingested_assets WHERE asset_type = $1")
-                    .bind(asset_type)
-                    .fetch_one(&state.db)
-                    .await?;
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM ingested_assets WHERE asset_type = $1",
+            )
+            .bind(asset_type)
+            .fetch_one(&state.db)
+            .await?;
 
             let rows: Vec<(Value,)> = sqlx::query_as(
                 r#"
@@ -143,10 +144,7 @@ pub async fn list_asset_types_handler(
             // sqlx/Postgres version combination surfaces it as Option<i64>.
             let count: i64 = row
                 .try_get::<i64, _>("count")
-                .or_else(|_| {
-                    row.try_get::<Option<i64>, _>("count")
-                        .map(|v| v.unwrap_or(0))
-                })
+                .or_else(|_| row.try_get::<Option<i64>, _>("count").map(|v| v.unwrap_or(0)))
                 .unwrap_or(0);
 
             AssetType {
