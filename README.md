@@ -108,6 +108,34 @@ than multi-user access control — see the Notes section below for where
 this would need to evolve if more than one person/service needs distinct
 credentials.
 
+## Rate limiting
+
+Every route except `/health` is rate-limited, keyed by API key rather
+than IP address (`src/rate_limit.rs`). Defaults to 10 requests/second
+sustained with a burst of 20, configurable via `RATE_LIMIT_PER_SECOND`
+and `RATE_LIMIT_BURST` in `.env`.
+
+Requests over the limit get a `429`:
+
+```json
+{ "error": "rate limit exceeded, retry after 2s" }
+```
+
+A few things worth knowing about how this is scoped:
+
+- **Limiting runs before auth, not after.** A flood of requests with a
+  missing or wrong API key is still throttled — they all share one
+  "invalid" bucket rather than each bad attempt getting its own fresh
+  allowance by varying the (garbage) key on every request. The `401`
+  for bad auth still happens, just after the rate-limit check.
+- **In-memory, per-process.** State resets on restart and isn't shared
+  across multiple instances of the API. Fine for a single local process;
+  would need a shared backend (e.g. Redis) to mean anything across
+  multiple replicas.
+- A background thread sweeps stale rate-limit buckets every 60 seconds
+  (the crate's own recommended pattern), so long-running processes
+  don't accumulate unbounded memory from one-off bad-auth attempts.
+
 ## Trying it out
 
 Create a sample CSV:
@@ -212,8 +240,9 @@ This is a starting point, not production-ready:
   to support multiple distinct clients, the natural next step is moving
   key lookup into the DB (a `api_keys` table with name/hash/revoked_at)
   rather than a single `Config::api_key` string comparison.
-- **No rate limiting.** Nothing currently stops a (mis)behaving or
-  malicious client with a valid key from hammering `/upload` repeatedly.
+- **Rate limiting is in-memory and per-process** (see Rate Limiting
+  section above) — it resets on restart and wouldn't coordinate across
+  multiple instances if this ever ran as more than one process.
 - **Plain `sqlx::query`, not `sqlx::query!`.** The macro form checks SQL
   against your live schema at compile time, which is great once your
   schema stabilizes — but it requires `DATABASE_URL` to be reachable at
@@ -239,6 +268,7 @@ src/
   config.rs           # env-based config struct
   error.rs            # AppError (HTTP-facing) + IngestError (parser-facing)
   auth.rs              # X-API-Key middleware (constant-time comparison)
+  rate_limit.rs         # per-API-key rate limiting (tower_governor)
   db/
     mod.rs            # pool creation
     queries.rs         # insert_batch: transactional bulk insert
