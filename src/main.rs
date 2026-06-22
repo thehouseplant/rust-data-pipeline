@@ -37,7 +37,14 @@ async fn main() -> anyhow::Result<()> {
         api_key: config.api_key.clone(),
     };
 
-    let app = routes::build_router(state).layer(DefaultBodyLimit::max(config.max_upload_bytes));
+    let governor_layer = rate_limit::build_rate_limit_layer(
+        config.api_key.clone(),
+        config.rate_limit_per_second,
+        config.rate_limit_burst,
+    );
+
+    let app = routes::build_router(state, governor_layer)
+        .layer(DefaultBodyLimit::max(config.max_upload_bytes));
 
     let addr = format!("0.0.0.0:{}", config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
