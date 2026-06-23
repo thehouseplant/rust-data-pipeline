@@ -1,7 +1,8 @@
 use crate::{db::queries, error::AppError, ingest::resolve_ingestor, AppState};
 use axum::{extract::Multipart, extract::State, Json};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -121,16 +122,27 @@ async fn process_single_file(state: &AppState, filename: &str, data: &[u8]) -> F
 pub async fn list_recent_handler(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Value>>, AppError> {
-    let rows: Vec<(Value,)> = sqlx::query_as(
+    // Local struct mirrors assets::AssetRow - defined here rather than
+    // re-exported to keep the two handlers independently maintainable.
+    struct RecentRow {
+        id: Uuid,
+        source_filename: String,
+        asset_type: String,
+        payload: Value,
+        batch_id: Uuid,
+        created_at: DateTime<Utc>,
+    }
+
+    let rows = sqlx::query_as!(
+        RecentRow,
         r#"
-        SELECT jsonb_build_object(
-            'id', id,
-            'source_filename', source_filename,
-            'asset_type', asset_type,
-            'payload', payload,
-            'batch_id', batch_id,
-            'created_at', created_at
-        )
+        SELECT
+            id,
+            source_filename,
+            asset_type,
+            payload as "payload: Value",
+            batch_id,
+            created_at
         FROM ingested_assets
         ORDER BY created_at DESC
         LIMIT 50
@@ -139,5 +151,19 @@ pub async fn list_recent_handler(
     .fetch_all(&state.db)
     .await?;
 
-    Ok(Json(rows.into_iter().map(|(v,)| v).collect()))
+    let values = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "source_filename": row.source_filename,
+                "asset_type": row.asset_type,
+                "payload": row.payload,
+                "batch_id": row.batch_id,
+                "created_at": row.created_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(values))
 }

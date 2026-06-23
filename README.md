@@ -41,13 +41,30 @@ rather than something specific to this crate.
 
    Wait a few seconds for the healthcheck to pass (`docker compose ps`).
 
-2. Install `sqlx-cli` if you don't already have it (only needed if you
-   want to run migrations manually — the app also runs them automatically
-   on startup):
+2. Install `sqlx-cli` — needed to regenerate the offline query cache
+   when you change SQL queries, and optionally for running migrations
+   manually (the app also runs migrations automatically on startup):
 
    ```bash
    cargo install sqlx-cli --no-default-features --features postgres,rustls
    ```
+
+   The `.sqlx/` directory in `api/` is committed to the repo and contains
+   pre-generated query metadata for offline builds — `cargo build` reads
+   from it without needing a live database. If you change any SQL query
+   (any `sqlx::query!`, `query_as!`, or `query_scalar!` call), regenerate
+   it while Postgres is running:
+
+   ```bash
+   cd api   # must run from here, where .sqlx/ lives
+   cargo sqlx prepare
+   git add .sqlx/
+   git commit -m "Update sqlx offline cache"
+   ```
+
+   If you forget and try to build without Postgres running after changing
+   a query, you'll get a compile error like `query was not found in offline
+   mode` — that's the signal to run `cargo sqlx prepare`.
 
 3. Set up your `.env` (one already exists with a generated key for local
    dev, but if you're starting fresh, copy the template and generate
@@ -243,20 +260,19 @@ This is a starting point, not production-ready:
 - **Rate limiting is in-memory and per-process** (see Rate Limiting
   section above) — it resets on restart and wouldn't coordinate across
   multiple instances if this ever ran as more than one process.
-- **Plain `sqlx::query`, not `sqlx::query!`.** The macro form checks SQL
-  against your live schema at compile time, which is great once your
-  schema stabilizes — but it requires `DATABASE_URL` to be reachable at
-  `cargo build` time, or a checked-in `.sqlx` query cache (`cargo sqlx
-  prepare`) for CI/offline builds. Worth switching to once you're past
-  the experimentation phase.
+- **Compile-time SQL checking via `sqlx::query!` macros** is now in
+  place. The `.sqlx/` offline cache is committed so builds work without
+  a live database. Remember to run `cargo sqlx prepare` and commit the
+  updated cache whenever you change a SQL query — see the Running locally
+  section above.
 - **No retry/backoff** on the DB connection at startup — if Postgres
   isn't ready yet, the app will just fail to start. Fine locally; for
   production, add a connect-retry loop or rely on your orchestrator's
   restart policy.
-- **CSV/JSON fields all land as strings/JSON values** without further
-  type coercion (e.g. CSV numeric columns stay as JSON strings, not
-  numbers). Worth revisiting once you know what queries you'll run
-  against this data — JSONB lets you defer that decision.
+- **CSV numeric columns are coerced to JSON numbers** (integers and
+  floats), and empty cells become JSON `null`. Column type is inferred
+  by scanning the whole column before converting, so a mixed column
+  (e.g. mostly numbers but one "N/A") stays as strings throughout.
 - **Image ingestor only extracts EXIF.** No thumbnailing, no actual
   image bytes stored — only metadata, per the original ask.
 
